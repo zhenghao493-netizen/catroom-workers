@@ -1,48 +1,9 @@
-import {GameRoom,json} from './server/room.js';
+import {json} from './server/room.js';
+import {GameRoom} from './server/flight-room.js';
 import {randomInt} from './games/random.js';
 import {serveAvatar} from './server/avatar-sources.js';
 export {GameRoom};
 const COOKIE='catroom_sid';
-const APP_PARTS=['/_packed/app-00.b64','/_packed/app-01.b64','/_packed/app-02.b64','/_packed/app-03.b64'];
-const STYLE_PARTS=['/_packed/style-00.b64','/_packed/style-01.b64','/_packed/style-02.b64'];
-const BOARD_URL='https://raw.githubusercontent.com/netmanfisher/chinese-ludo/main/img/xxx.jpg';
-async function packedAsset(request,env,parts,type){
-  try{
-    const base=new URL(request.url);
-    const chunks=await Promise.all(parts.map(async path=>{
-      const r=await env.ASSETS.fetch(new Request(new URL(path,base),{method:'GET'}));
-      if(!r.ok)throw new Error(`${path} ${r.status}`);
-      return (await r.text()).replace(/\s+/g,'');
-    }));
-    const binary=atob(chunks.join(''));
-    const gzip=new Uint8Array(binary.length);
-    for(let i=0;i<binary.length;i++)gzip[i]=binary.charCodeAt(i);
-    const stream=new Blob([gzip]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const bytes=new Uint8Array(await new Response(stream).arrayBuffer());
-    return new Response(bytes,{status:200,headers:{
-      'Content-Type':type,
-      'Cache-Control':'no-store',
-      'X-Content-Type-Options':'nosniff',
-      'X-Catroom-Asset':'packed-v1'
-    }});
-  }catch(err){
-    return new Response(`asset load failed: ${String(err?.message||err)}`,{status:500,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
-  }
-}
-async function boardAsset(request,ctx){
-  const cache=caches.default,cacheKey=new Request(request.url,{method:'GET'}),hit=await cache.match(cacheKey);
-  if(hit)return hit;
-  const upstream=await fetch(BOARD_URL,{headers:{'User-Agent':'Catroom/0.4'}});
-  if(!upstream.ok)return new Response('board asset unavailable',{status:502,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
-  const headers=new Headers(upstream.headers);
-  headers.set('Content-Type','image/jpeg');
-  headers.set('Cache-Control','public, max-age=604800, stale-while-revalidate=86400');
-  headers.set('X-Content-Type-Options','nosniff');
-  headers.delete('Set-Cookie');
-  const response=new Response(upstream.body,{status:200,headers});
-  ctx.waitUntil(cache.put(cacheKey,response.clone()));
-  return response;
-}
 async function boundedBody(request,maxBytes=4096){
   if(!request.body)return '';
   const reader=request.body.getReader(),parts=[];let size=0;
@@ -66,13 +27,10 @@ export default {
   async fetch(request,env,ctx){
     try{
       const url=new URL(request.url);
-      if(request.method==='GET'&&url.pathname==='/app.js')return packedAsset(request,env,APP_PARTS,'text/javascript; charset=utf-8');
-      if(request.method==='GET'&&url.pathname==='/style.css')return packedAsset(request,env,STYLE_PARTS,'text/css; charset=utf-8');
-      if(request.method==='GET'&&url.pathname==='/api/assets/chinese-ludo-board')return boardAsset(request,ctx);
       if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(request);
       const imageRoute=url.pathname.match(/^\/api\/avatars\/([0-5])$/);
       if(imageRoute&&request.method==='GET')return serveAvatar(request,env,ctx,Number(imageRoute[1]));
-      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.4.0',runtime:'cloudflare-workers'});
+      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.5.0',flyingRuleset:'flight-lab-1',runtime:'cloudflare-workers'});
       const origin=request.headers.get('Origin');
       if(origin&&origin!==url.origin)return json({error:'不接受跨站请求'},403);
       if(request.method!=='GET'&&request.method!=='POST')return json({error:'不支持的请求方法'},405);
@@ -87,6 +45,7 @@ export default {
       }
       const call=(code,path,method,body)=>{
         const id=env.ROOMS.idFromName(code),stub=env.ROOMS.get(id),headers=new Headers(request.headers);
+        // Never trust a forwarded player token supplied by the caller.
         headers.set('X-Player-Token',sid.token);headers.delete('Content-Length');headers.delete('Cookie');
         if(body)headers.set('Content-Type','application/json');
         return stub.fetch(new Request(`https://internal${path}`,{method,headers,body:body?JSON.stringify(body):undefined}));
