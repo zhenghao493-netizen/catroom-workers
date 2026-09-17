@@ -1,7 +1,8 @@
 import Flight from './engine.js';
+import {installCompactLayout} from './compact.js?v=051';
 import {RoomConnection} from './network.js';
 import {ico,NAMES} from './art.js';
-import {paintView,paintConnection,paintClock} from './view.js';
+import {paintView,paintConnection,paintClock} from './view.js?v=051';
 import {animateMove,moveSummary} from './pieces.js';
 const $=s=>document.querySelector(s),code=new URL(location.href).searchParams.get('room');
 let room=null,visual=null,selected=null,busy=false,generation=0,queued=null,toastTimer=null,seen=new Set(),firstChat=true,lane=0,logged=-1;
@@ -51,14 +52,21 @@ try{setTheme(localStorage.getItem('catroom.flightlab.theme'));}catch{setTheme('d
 document.querySelectorAll('.theme-switch button').forEach(b=>b.onclick=()=>setTheme(b.dataset.theme));
 $('#connectionStatus').onclick=()=>net.connected?announce('房间号：'+code):net.reconnect();
 $('#mainAction').onclick=()=>{
-  if(busy||!room?.game?.engine||room.game.ids[room.game.turn]!==room.me)return;
+  if(busy||!room?.game?.engine||!net.connected||!net.synced||net.pending)return;
+  if(room.game.engine.winner!==null){
+    if(room.host!==room.me)return;
+    const p=showDialog('再来一局？','<p>返回原房间等待室，聊天和胜场保留。朋友重新准备后，由房主开始下一局。</p><div class="menu-actions"><button id="confirmRematch">确认返回等待室</button></div>');
+    p.querySelector('#confirmRematch').onclick=()=>{if(net.send('reset'))$('#dialog').close();};return;
+  }
+  if(room.game.ids[room.game.turn]!==room.me)return;
   if(room.game.engine.phase==='roll')net.send('roll');else if(selected!==null)net.send('move',{piece:selected});
 };
 $('#routeToggle').onclick=()=>{const off=$('#board').classList.toggle('hide-guide');$('#routeToggle').setAttribute('aria-pressed',String(!off));};
-$('#chatOpen').onclick=()=>{$('#chatInput').scrollIntoView({block:'center',behavior:'smooth'});$('#chatInput').focus();};
+const compact=installCompactLayout();
+$('#chatOpen').onclick=()=>compact.openChat();
 $('#chatForm').onsubmit=e=>{e.preventDefault();const input=$('#chatInput'),text=input.value.trim();if(!text)return;if(net.send('chat',{text}))input.value='';};
 $('#danmakuToggle').checked=!!danmaku;$('#danmakuToggle').onchange=e=>{danmaku=e.target.checked;try{localStorage.setItem('catroom.danmaku',JSON.stringify(danmaku));}catch{}};
-function rules(){const o=room?.game?.engine?.options;if(!o)return;showDialog('本局规则',`<ol><li><b>${o.takeoff.join(' / ')} 点起飞：</b>起飞只到起飞位；掷出 6 可以再掷。</li><li><b>公共路线顺时针：</b>按骰子逐格走完，再结算跳格。</li><li><b>同色跳格${o.jump?'已开启':'已关闭'}；飞行捷径${o.flight?'已开启':'已关闭'}。</b>开启时，同色跳 4 格，跳到飞行入口可继续飞 12 格；飞完不再跳。终点入口不触发跳格。</li><li><b>撞机只结算最终公共落点。</b>经过、跳过、飞越都不撞回；终点通道安全。同色可叠停，不叠飞、不拦路。</li><li><b>第 50 步到入口，再走 6 步到终点。</b>${o.bounce?'超过终点按多余步数反弹。':'必须精确到达，超出的飞机不可选。'}</li><li><b>三连 6 ${o.threeSixes?'已开启':'已关闭'}：</b>${o.threeSixes?'第三次跳过，前两次不撤回。':'不跳过第三次。'}</li><li>四架到达即获胜。${room.options.turnSeconds?`每次操作时限 ${room.options.turnSeconds} 秒，超时由服务器保底操作。`:'本局不限时。'}</li></ol><p>可走列表、骰子、落点和撞机都由服务器裁定。三套外观只影响显示。</p>`);}
+function rules(){const o=room?.game?.engine?.options;if(!o)return;showDialog('本局规则',`<p>白圈是可走，金圈是已选。先点棋子查看路线和落点，再确认移动。也可用操作台的四个大按钮选择。</p><ol><li><b>${o.takeoff.join(' / ')} 点起飞：</b>起飞只到起飞位；掷出 6 可以再掷。</li><li><b>公共路线顺时针：</b>按骰子逐格走完，再结算跳格。</li><li><b>同色跳格${o.jump?'已开启':'已关闭'}；飞行捷径${o.flight?'已开启':'已关闭'}。</b>开启时，同色跳 4 格，跳到飞行入口可继续飞 12 格；飞完不再跳。终点入口不触发跳格。</li><li><b>撞机只结算最终公共落点。</b>经过、跳过、飞越都不撞回；终点通道安全。同色可叠停，不叠飞、不拦路。</li><li><b>第 50 步到入口，再走 6 步到终点。</b>${o.bounce?'超过终点按多余步数反弹。':'必须精确到达，超出的飞机不可选。'}</li><li><b>三连 6 ${o.threeSixes?'已开启':'已关闭'}：</b>${o.threeSixes?'第三次跳过，前两次不撤回。':'不跳过第三次。'}</li><li>四架到达即获胜。${room.options.turnSeconds?`每次操作时限 ${room.options.turnSeconds} 秒，超时由服务器保底操作。`:'本局不限时。'}</li></ol><p>可走列表、骰子、落点和撞机都由服务器裁定。三套外观只影响显示。</p>`);}
 $('#rules').onclick=rules;
 $('#credits').onclick=()=>showDialog('版本与素材', '<p>猫猫开局 v0.5.0。棋盘与联机服务器共用同一套规则节点；飞机图标采用 Tabler Icons（MIT）。</p><p><a href="./LICENSE.Tabler.txt" target="_blank" rel="noopener">查看素材许可全文</a></p><p>当前页面是朋友房联机版，不是原先的离线演示局面。</p>');
 $('#backRoom').onclick=()=>{
@@ -69,7 +77,7 @@ $('#backRoom').onclick=()=>{
   panel.querySelector('#copyInvite').onclick=async()=>{const text=location.origin+'/?room='+code;try{await navigator.clipboard.writeText(text);announce('邀请链接已复制');}catch{announce('房间号：'+code);}};
 };
 const clock=setInterval(()=>paintClock(room),1000);
-window.addEventListener('pagehide',()=>{generation++;net.stop();clearInterval(clock);});
+window.addEventListener('pagehide',()=>{generation++;net.stop();clearInterval(clock);compact.destroy();});
 window.__FLIGHT_ONLINE__={getRoom:()=>room?structuredClone(room):null,getBusy:()=>busy,getSelected:()=>selected};
 async function start(){
   if(!/^\d{6}$/.test(code??'')){announce('请从大厅输入房间号进入');setTimeout(()=>exit('/'),1000);return;}
