@@ -6,12 +6,22 @@ const COOKIE='catroom_sid';
 async function compressedAsset(request,env,path,type){
   const asset=await env.ASSETS.fetch(new Request(new URL(path,request.url),{method:'GET',headers:request.headers}));
   if(!asset.ok)return asset;
-  const bytes=new Uint8Array(await asset.arrayBuffer());
+  let bytes=new Uint8Array(await asset.arrayBuffer());
   const isGzip=bytes.length>2&&bytes[0]===0x1f&&bytes[1]===0x8b;
-  const headers=new Headers(asset.headers);
-  headers.set('Content-Type',type);headers.set('Cache-Control','public, max-age=3600');headers.delete('Content-Length');
-  if(isGzip)headers.set('Content-Encoding','gzip');else headers.delete('Content-Encoding');
-  return new Response(bytes,{status:asset.status,headers});
+  if(isGzip){
+    try{
+      const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+      bytes=new Uint8Array(await new Response(stream).arrayBuffer());
+    }catch{
+      return new Response('asset decompression failed',{status:500,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
+    }
+  }
+  const headers=new Headers();
+  headers.set('Content-Type',type);
+  headers.set('Cache-Control','no-store');
+  headers.set('X-Content-Type-Options','nosniff');
+  headers.set('X-Catroom-Asset','plain');
+  return new Response(bytes,{status:200,headers});
 }
 async function boundedBody(request,maxBytes=4096){
   if(!request.body)return '';
@@ -41,7 +51,7 @@ export default {
       if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(request);
       const imageRoute=url.pathname.match(/^\/api\/avatars\/([0-5])$/);
       if(imageRoute&&request.method==='GET')return serveAvatar(request,env,ctx,Number(imageRoute[1]));
-      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.3.1',runtime:'cloudflare-workers'});
+      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.3.2',runtime:'cloudflare-workers'});
       const origin=request.headers.get('Origin');
       if(origin&&origin!==url.origin)return json({error:'不接受跨站请求'},403);
       if(request.method!=='GET'&&request.method!=='POST')return json({error:'不支持的请求方法'},405);
