@@ -2,13 +2,13 @@
  * Avatar assets are served from Workers Static Assets so the room UI does not
  * depend on third-party image hosts at play time.
  *
- * Photo assets 0-2 are prototype-only cat photo references and are not covered
- * by this project's software license. See THIRD_PARTY_NOTICES.md.
+ * The Maodie photo is prototype-only artwork and is not covered by this
+ * project's software license. See THIRD_PARTY_NOTICES.md.
  */
 const LOCAL_AVATARS=[
-  '/avatars/maodie-happy.png',
-  '/avatars/maodie-stare.png',
-  '/avatars/maodie-interesting.png',
+  '/avatars/maodie-photo.png',
+  '/avatars/maodie-photo.png',
+  '/avatars/maodie-photo.png',
   '/avatars/3.svg',
   '/avatars/4.svg',
   '/avatars/5.svg'
