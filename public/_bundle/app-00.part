@@ -1,0 +1,60 @@
+import {boardSVG,pieceXY,planeIcon,COLORS,COLOR_NAMES} from './board.js';
+const $=s=>document.querySelector(s),app=$('#app'),modal=$('#modal');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const read=(k,fallback)=>{try{return JSON.parse(localStorage.getItem(k))??fallback;}catch{return fallback;}};
+const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
+const storedProfile=read('catroom.profile',null);
+const profile={nickname:typeof storedProfile?.nickname==='string'?storedProfile.nickname.slice(0,24):'',avatar:storedProfile?.avatar==null?Math.floor(Math.random()*6):avatarIndex(storedProfile.avatar)};
+let kind='flying',room=null,socket=null,connected=false,intentional=false,connecting=false,retry=0,retryTimer=null,heartbeat=null,lastPong=0;
+let selected=new Set(),lastGameSeq=-1,lastPos={},hintMoves=[],hintIndex=0,pending=new Set(),lastDiceEvent='';
+let modalKind=null,busy=false,chatDraft='',sound=read('catroom.sound',false),danmaku=read('catroom.danmaku',true),seenChat=new Set(),lane=0;
+let options={turnSeconds:45,flying:{takeoff:'6',jump:true,flight:true,bounce:true,threeSixes:true}};
+let invited=new URL(location.href).searchParams.get('room')??'',joinDraft=invited,toastTimer=null;
+const AVATAR_TONES=['奶油橘','薄荷绿','雾霾蓝','草莓粉','芋泥紫','燕麦白'];
+const AVATAR_NAMES=AVATAR_TONES.map(t=>'耄耋 · '+t);
+function avatarIndex(value){const n=Number(value);return Number.isInteger(n)&&n>=0&&n<6?n:0;}
+// Photo pixels stay unchanged. Colour, framing and shadow are CSS-only.
+function avatarPhoto(i){const n=avatarIndex(i);return `<img class="maodie-photo" data-fallback="${n}" src="${avImg(n)}" alt="${AVATAR_NAMES[n]}" width="64" height="64" draggable="false">`;}
+// Capturing listener also covers images added later by room/chat renders.
+// Never retry forever; local SVG is only a missing-file safety net.
+document.addEventListener('error',e=>{const img=e.target;if(!(img instanceof HTMLImageElement)||!img.matches('.maodie-photo')||img.dataset.failed)return;img.dataset.failed='1';img.alt='备用猫咪插画';img.src=`/avatars/${avatarIndex(img.dataset.fallback)}.svg`;},true);
+let diceUntil=0,confirmResolve=null,suppressCardClickUntil=0,handGesture=null;
+function avImg(i){return '/avatars/maodie-photo.png';}
+function avatar(p,size=''){return `<span class="avatar" data-tone="${avatarIndex(p.avatar)}" ${size?`style="width:${size}px;height:${size}px"`:''}>${avatarPhoto(p.avatar)}<i class="status ${p.online===false?'off':''}"></i></span>`;}
+function toast(text){$('#toast').textContent=text;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),3600);}
+function beep(){if(!sound)return;try{const a=new (window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.setValueAtTime(680,a.currentTime);o.frequency.exponentialRampToValueAtTime(460,a.currentTime+.1);g.gain.setValueAtTime(.035,a.currentTime);g.gain.exponentialRampToValueAtTime(.001,a.currentTime+.13);o.start();o.stop(a.currentTime+.15);o.onended=()=>a.close();}catch{}}
+const gameName=k=>k==='flying'?'飞行棋':'斗地主';
+// All icons are local vectors. There is no CDN or UI-framework runtime dependency.
+const iconPaths={
+  arrow:'M5 12h14m-6-6 6 6-6 6',back:'m14 5-7 7 7 7',chevron:'m9 5 7 7-7 7',
+  plus:'M12 5v14M5 12h14',close:'m6 6 12 12M6 18 18 6',check:'m5 12 4 4L19 6',
+  chat:'M20 11.5a8 8 0 0 1-8 8H5l-4 2 2-6a8 8 0 0 1 9-12 8 8 0 0 1 8 8ZM7 11h.01M11 11h.01M15 11h.01',
+  copy:'M9 8h10v12H9zM15 8V4H5v12h4',share:'M12 16V3m-4 4 4-4 4 4M5 13v7h14v-7',
+  volume:'m11 4-6 5H2v6h3l6 5zM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14',
+  mute:'m11 4-6 5H2v6h3l6 5zM16 9l6 6m0-6-6 6',
+  settings:'M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6',
+  book:'M3 4h6c2 0 3 1 3 2 0-1 1-2 3-2h6v15h-6c-2 0-3 1-3 2 0-1-1-2-3-2H3zM12 6v15',
+  people:'M16 21v-3c0-3-3-4-6-4s-6 1-6 4v3M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7-6c4 0 5 6 1 7m1 3c3 0 4 2 4 5',
+  crown:'m3 6 5 4 4-7 4 7 5-4-2 13H5zM6 22h12',
+  shuffle:'M3 6h3c4 0 6 12 10 12h5m-4-4 4 4-4 4M3 18h3c4 0 6-12 10-12h5m-4-4 4 4-4 4',
+  help:'M9 9c0-5 7-5 7-1 0 3-4 3-4 6m0 4h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20',
+  trophy:'M7 3h10v8a5 5 0 0 1-10 0zM7 5H3v3c0 3 2 4 5 4m9-7h4v3c0 3-2 4-5 4M12 16v5m-4 1h8',
+  spark:'m12 2 2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z',
+  clock:'M12 7v5l3 2M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20',
+};
+function icon(n,cls=''){return `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${iconPaths[n]??iconPaths.spark}"/></svg>`;}
+function catMark(){return '<svg class="cat-mark" viewBox="0 0 48 48" aria-hidden="true"><path d="M8 22 7 7l13 7h8l13-7-1 15c5 16-4 22-16 22S3 38 8 22Z" fill="currentColor"/><path d="M16 27h2m12 0h2m-12 7 4 2 4-2" stroke="#fff8e9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';}
+function diceFace(n=6,extra=''){return `<span class="dice-face ${extra}" data-value="${n}" aria-label="${n} 点">${Array.from({length:9},(_,i)=>`<i class="pip p${i}"></i>`).join('')}</span>`;}
+function setScene(name){document.body.dataset.scene=name;document.querySelector('meta[name="theme-color"]')?.setAttribute('content',name==='poker'?'#133d37':name==='flying'?'#eaf3fc':'#f6f5f0');}
+function ruleChips(k=kind,o=options){
+  const chips=k==='flying'?[`${o.flying?.takeoff==='56'?'5 / 6':o.flying?.takeoff==='246'?'2 / 4 / 6':'6'} 点起飞`,o.flying?.jump?'同色跳格':'不跳格',o.flying?.flight?'飞行捷径':'无捷径',o.flying?.bounce?'终点反弹':'精确到达']:['经典三人','叫分制','无癞子'];
+  chips.push(o.turnSeconds?`${o.turnSeconds} 秒 / 回合`:'不限时');
+  return chips.map(x=>`<span class="rule-chip">${x}</span>`).join('');
+}
+function gameArt(k){return k==='flying'?`<div class="cover-orbit"></div><div class="mini-board">${boardSVG()}</div><span class="cover-plane">${planeIcon()}</span><span class="cover-dice">${diceFace(6)}</span>`:`<div class="cover-orbit"></div><div class="cover-card card-one"><b>A</b><small>♠</small><span>♠</span></div><div class="cover-card card-two"><b>K</b><small>♦</small><span>♦</span></div><span class="cover-crown">${icon('crown')}</span>`;}
+function home(){
+  setScene('home');const last=read('catroom.last',null);
+  app.innerHTML=`<main class="home-shell">
+    <header class="home-top"><a class="brand" href="/" aria-label="猫猫开局首页"><span class="brand-mark">${catMark()}</span><span><b>猫猫开局</b><small>CATROOM / PLAY TOGETHER</small></span></a><button class="icon-btn home-help" data-act="help" aria-label="使用说明">${icon('help')}</button></header>
+    <div class="home-layout"><section class="home-main">
+      <div class="hero"><div class="eyebrow"><span></span> THE FRIENDS CLUB</div><h1>人齐了，<span>就开局。</span></h1><p>三两好友，快乐不需要下载。</p><div class="hero-sticker" aria-hidden="true">LET’S<br><b>PLAY!</b></div></div>
