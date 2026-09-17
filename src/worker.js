@@ -5,6 +5,7 @@ export {GameRoom};
 const COOKIE='catroom_sid';
 const APP_PARTS=['/_packed/app-00.b64','/_packed/app-01.b64','/_packed/app-02.b64','/_packed/app-03.b64'];
 const STYLE_PARTS=['/_packed/style-00.b64','/_packed/style-01.b64','/_packed/style-02.b64'];
+const BOARD_URL='https://raw.githubusercontent.com/netmanfisher/chinese-ludo/main/img/xxx.jpg';
 async function packedAsset(request,env,parts,type){
   try{
     const base=new URL(request.url);
@@ -27,6 +28,20 @@ async function packedAsset(request,env,parts,type){
   }catch(err){
     return new Response(`asset load failed: ${String(err?.message||err)}`,{status:500,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
   }
+}
+async function boardAsset(request,ctx){
+  const cache=caches.default,cacheKey=new Request(request.url,{method:'GET'}),hit=await cache.match(cacheKey);
+  if(hit)return hit;
+  const upstream=await fetch(BOARD_URL,{headers:{'User-Agent':'Catroom/0.4'}});
+  if(!upstream.ok)return new Response('board asset unavailable',{status:502,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
+  const headers=new Headers(upstream.headers);
+  headers.set('Content-Type','image/jpeg');
+  headers.set('Cache-Control','public, max-age=604800, stale-while-revalidate=86400');
+  headers.set('X-Content-Type-Options','nosniff');
+  headers.delete('Set-Cookie');
+  const response=new Response(upstream.body,{status:200,headers});
+  ctx.waitUntil(cache.put(cacheKey,response.clone()));
+  return response;
 }
 async function boundedBody(request,maxBytes=4096){
   if(!request.body)return '';
@@ -53,10 +68,11 @@ export default {
       const url=new URL(request.url);
       if(request.method==='GET'&&url.pathname==='/app.js')return packedAsset(request,env,APP_PARTS,'text/javascript; charset=utf-8');
       if(request.method==='GET'&&url.pathname==='/style.css')return packedAsset(request,env,STYLE_PARTS,'text/css; charset=utf-8');
+      if(request.method==='GET'&&url.pathname==='/api/assets/chinese-ludo-board')return boardAsset(request,ctx);
       if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(request);
       const imageRoute=url.pathname.match(/^\/api\/avatars\/([0-5])$/);
       if(imageRoute&&request.method==='GET')return serveAvatar(request,env,ctx,Number(imageRoute[1]));
-      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.3.3',runtime:'cloudflare-workers'});
+      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.4.0',runtime:'cloudflare-workers'});
       const origin=request.headers.get('Origin');
       if(origin&&origin!==url.origin)return json({error:'不接受跨站请求'},403);
       if(request.method!=='GET'&&request.method!=='POST')return json({error:'不支持的请求方法'},405);
