@@ -1,0 +1,23 @@
+{
+  "name": "catroom-workers",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "猫猫开局：手机优先的飞行棋和斗地主朋友房，Cloudflare Workers + Durable Objects",
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8787",
+    "deploy": "wrangler deploy",
+    "check:deploy": "wrangler deploy --dry-run",
+    "test": "node --test tests/*.test.mjs",
+    "preview:offline": "node scripts/local-preview.mjs",
+    "test:ws": "python tests/ws-smoke.py",
+    "test:ui": "python tests/ui-v02.py",
+    "test:browser": "python tests/browser-check.py"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
