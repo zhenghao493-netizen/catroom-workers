@@ -3,25 +3,30 @@ import {randomInt} from './games/random.js';
 import {serveAvatar} from './server/avatar-sources.js';
 export {GameRoom};
 const COOKIE='catroom_sid';
-async function compressedAsset(request,env,path,type){
-  const asset=await env.ASSETS.fetch(new Request(new URL(path,request.url),{method:'GET',headers:request.headers}));
-  if(!asset.ok)return asset;
-  let bytes=new Uint8Array(await asset.arrayBuffer());
-  const isGzip=bytes.length>2&&bytes[0]===0x1f&&bytes[1]===0x8b;
-  if(isGzip){
-    try{
-      const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-      bytes=new Uint8Array(await new Response(stream).arrayBuffer());
-    }catch{
-      return new Response('asset decompression failed',{status:500,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
-    }
+const APP_PARTS=['/_packed/app-00.b64','/_packed/app-01.b64','/_packed/app-02.b64','/_packed/app-03.b64'];
+const STYLE_PARTS=['/_packed/style-00.b64','/_packed/style-01.b64','/_packed/style-02.b64'];
+async function packedAsset(request,env,parts,type){
+  try{
+    const base=new URL(request.url);
+    const chunks=await Promise.all(parts.map(async path=>{
+      const r=await env.ASSETS.fetch(new Request(new URL(path,base),{method:'GET'}));
+      if(!r.ok)throw new Error(`${path} ${r.status}`);
+      return (await r.text()).replace(/\s+/g,'');
+    }));
+    const binary=atob(chunks.join(''));
+    const gzip=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++)gzip[i]=binary.charCodeAt(i);
+    const stream=new Blob([gzip]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const bytes=new Uint8Array(await new Response(stream).arrayBuffer());
+    return new Response(bytes,{status:200,headers:{
+      'Content-Type':type,
+      'Cache-Control':'no-store',
+      'X-Content-Type-Options':'nosniff',
+      'X-Catroom-Asset':'packed-v1'
+    }});
+  }catch(err){
+    return new Response(`asset load failed: ${String(err?.message||err)}`,{status:500,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
   }
-  const headers=new Headers();
-  headers.set('Content-Type',type);
-  headers.set('Cache-Control','no-store');
-  headers.set('X-Content-Type-Options','nosniff');
-  headers.set('X-Catroom-Asset','plain');
-  return new Response(bytes,{status:200,headers});
 }
 async function boundedBody(request,maxBytes=4096){
   if(!request.body)return '';
@@ -46,12 +51,12 @@ export default {
   async fetch(request,env,ctx){
     try{
       const url=new URL(request.url);
-      if(request.method==='GET'&&url.pathname==='/app.js')return compressedAsset(request,env,'/app.js.gz','text/javascript; charset=utf-8');
-      if(request.method==='GET'&&url.pathname==='/style.css')return compressedAsset(request,env,'/style.css.gz','text/css; charset=utf-8');
+      if(request.method==='GET'&&url.pathname==='/app.js')return packedAsset(request,env,APP_PARTS,'text/javascript; charset=utf-8');
+      if(request.method==='GET'&&url.pathname==='/style.css')return packedAsset(request,env,STYLE_PARTS,'text/css; charset=utf-8');
       if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(request);
       const imageRoute=url.pathname.match(/^\/api\/avatars\/([0-5])$/);
       if(imageRoute&&request.method==='GET')return serveAvatar(request,env,ctx,Number(imageRoute[1]));
-      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.3.2',runtime:'cloudflare-workers'});
+      if(url.pathname==='/api/health')return json({ok:true,app:'catroom',version:'0.3.3',runtime:'cloudflare-workers'});
       const origin=request.headers.get('Origin');
       if(origin&&origin!==url.origin)return json({error:'不接受跨站请求'},403);
       if(request.method!=='GET'&&request.method!=='POST')return json({error:'不支持的请求方法'},405);
