@@ -9,7 +9,9 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": [
-      "/api/*"
+      "/api/*",
+      "/app.js",
+      "/style.css"
     ]
   },
   "durable_objects": {
@@ -32,6 +34,6 @@
     "enabled": false
   },
   "vars": {
-    "CAT_PHOTOS": "off"
+    "CAT_PHOTOS": "local"
   }
 }
